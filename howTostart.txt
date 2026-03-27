@@ -1,0 +1,24 @@
+cd C:\Users\YASH\Desktop\adams
+
+# Serve the whole site + API (recommended)
+npm start
+# In the browser open exactly:
+#   http://127.0.0.1:3000/
+# (not file:///... — and use http, not https)
+# Sanity check: http://127.0.0.1:3000/health should show JSON {"ok":true,"service":"adams-api"}
+# If you see "Cannot GET /" or health is wrong, another app may be on port 3000 — stop it or set PORT=3001 in .env and open that port.
+
+# Optional — Flask dev only (HTML templates without Node):
+# .\.venv\Scripts\Activate.ps1
+# python app.py
+# Opens http://127.0.0.1:5000 — run npm start in another terminal if you need the API.
+
+# --- Deploy server.js (see Dockerfile + .env.example) ---
+# 1. Put MySQL somewhere reachable from the internet (managed MySQL / tunnel). Whitelist the host IP if needed.
+# 2. Push this repo to GitHub (no .env in git).
+# 3. Render.com: New Web Service -> connect repo -> Environment Docker / Dockerfile path ./Dockerfile
+#    Or Native: Build: npm ci   Start: npm start
+# 4. In the dashboard set every variable from .env.example (copy real values from your local .env).
+#    Set PUBLIC_URL=https://<your-service-url> (no trailing slash) so cron + Twilio logic use the live URL.
+# 5. Open your service URL: https://.../  and https://.../health
+# Free tiers often sleep: first request can be slow; cron may be unreliable unless you use an external ping or paid tier.

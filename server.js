@@ -1,3 +1,4 @@
+const path = require("path");
 const express = require("express");
 const cors = require("cors");
 const mysql = require("mysql2");
@@ -10,6 +11,11 @@ require("dotenv").config();
 
 const app = express();
 const PORT = process.env.PORT || 3000;
+const ROOT = path.join(__dirname);
+const PUBLIC_BASE = (process.env.PUBLIC_URL || `http://127.0.0.1:${PORT}`).replace(
+  /\/$/,
+  ""
+);
 
 app.use(express.json());
 app.use(cors());
@@ -424,57 +430,92 @@ app.delete("/delete-medicine/:id", (req, res) => {
   });
 });
 
+// --- Static frontend (same origin as API) ---
+// Mount only asset dirs so we do not expose the whole repo (e.g. .env is dotfile; other files stay private).
+const staticOpts = { dotfiles: "deny", index: false };
+app.use("/css", express.static(path.join(ROOT, "css"), staticOpts));
+app.use("/js", express.static(path.join(ROOT, "js"), staticOpts));
+app.use("/img", express.static(path.join(ROOT, "img"), staticOpts));
+app.use("/lib", express.static(path.join(ROOT, "lib"), staticOpts));
+app.use("/pages", express.static(path.join(ROOT, "pages"), staticOpts));
+app.use("/scss", express.static(path.join(ROOT, "scss"), staticOpts));
+
+["s.css", "ss.css", "sss.js"].forEach((name) => {
+  app.get(`/${name}`, (req, res) => res.sendFile(path.join(ROOT, name)));
+});
+
+// Home page (register as plain strings — do not use app.get with a single arg; that reads app settings in Express.)
+const indexPath = path.join(ROOT, "index.html");
+const sendIndexHtml = (req, res) => res.sendFile(indexPath);
+app.get("/", sendIndexHtml);
+app.get("/index.html", sendIndexHtml);
+
+// Quick check you hit this Node app (not another process bound to the same port).
+app.get("/health", (req, res) => res.json({ ok: true, service: "adams-api" }));
+
+app.use((req, res, next) => {
+  if (req.method !== "GET" || res.headersSent) return next();
+  res.status(404).sendFile(path.join(ROOT, "pages", "404.html"));
+});
+
 //------------------------------------------------------------------------------------------
 
-cron.schedule("* * * * *", () => {
-  console.log(":) Running daily alert check");
+app.listen(PORT, "0.0.0.0", () => {
+  console.log(`🟢 Server listening on port ${PORT}`);
+  console.log(`   Open in browser: http://127.0.0.1:${PORT}/`);
+  console.log(`   Health check: http://127.0.0.1:${PORT}/health`);
+  console.log(`   (Use http:// not file:// — open the URL above.)`);
+  console.log(
+    `   For scheduled alerts, set PUBLIC_URL to your public origin (e.g. https://your-host).`
+  );
 
-  axios
-    .get("http://localhost:3000/check-alerts")
-    .then((response) => {
-      const { upcomingAppointments, medicineAlerts } = response.data;
+  cron.schedule("* * * * *", () => {
+    console.log(":) Running daily alert check");
 
-      if (upcomingAppointments.length === 0 && medicineAlerts.length === 0) {
-        console.log(":| No alerts for today.");
-        return;
-      }
+    axios
+      .get(`${PUBLIC_BASE}/check-alerts`)
+      .then((response) => {
+        const { upcomingAppointments, medicineAlerts } = response.data;
 
-      let messageBody = "";
+        if (upcomingAppointments.length === 0 && medicineAlerts.length === 0) {
+          console.log(":| No alerts for today.");
+          return;
+        }
 
-      if (upcomingAppointments.length > 0) {
-        messageBody += " *📅Upcoming Appointments:*\n";
-        upcomingAppointments.forEach((a) => {
-          messageBody += `• ${a.client_name} – ${a.pet_name} on ${moment(
-            a.upcoming_appointment
-          ).format("DD MMM YYYY")}\n`;
-        });
-        messageBody += "\n";
-      }
-      if (medicineAlerts.length > 0) {
-        messageBody += " *⚠️Low Stock Medicines:*\n";
-        medicineAlerts.forEach((m) => {
-          messageBody += `• ${m.medicine_name} (for ${m.disease}) – Only ${m.quantity} left\n`;
-        });
-      }
+        let messageBody = "";
 
-      const client = twilio(
-        process.env.TWILIO_ACCOUNT_SID,
-        process.env.TWILIO_AUTH_TOKEN
-      );
+        if (upcomingAppointments.length > 0) {
+          messageBody += " *📅Upcoming Appointments:*\n";
+          upcomingAppointments.forEach((a) => {
+            messageBody += `• ${a.client_name} – ${a.pet_name} on ${moment(
+              a.upcoming_appointment
+            ).format("DD MMM YYYY")}\n`;
+          });
+          messageBody += "\n";
+        }
+        if (medicineAlerts.length > 0) {
+          messageBody += " *⚠️Low Stock Medicines:*\n";
+          medicineAlerts.forEach((m) => {
+            messageBody += `• ${m.medicine_name} (for ${m.disease}) – Only ${m.quantity} left\n`;
+          });
+        }
 
-      client.messages
-        .create({
-          from: process.env.TWILIO_WHATSAPP_FROM,
-          to: process.env.TWILIO_WHATSAPP_TO,
-          body: messageBody,
-        })
-        .then((message) => console.log("🟢WhatsApp alert sent:", message.sid))
-        .catch((err) => console.error("🔵Error sending WhatsApp:", err));
-    })
-    .catch((err) => {
-      console.error("Error during scheduled alert check:", err.message);
-    });
-});
-app.listen(PORT, () => {
-  console.log(`🟢Server running on http://localhost:${PORT}`);
+        const client = twilio(
+          process.env.TWILIO_ACCOUNT_SID,
+          process.env.TWILIO_AUTH_TOKEN
+        );
+
+        client.messages
+          .create({
+            from: process.env.TWILIO_WHATSAPP_FROM,
+            to: process.env.TWILIO_WHATSAPP_TO,
+            body: messageBody,
+          })
+          .then((message) => console.log("🟢WhatsApp alert sent:", message.sid))
+          .catch((err) => console.error("🔵Error sending WhatsApp:", err));
+      })
+      .catch((err) => {
+        console.error("Error during scheduled alert check:", err.message);
+      });
+  });
 });
